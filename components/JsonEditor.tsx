@@ -118,7 +118,8 @@ const TranslationUnit: React.FC<{
   onChange: (val: string) => void;
   multiline?: boolean;
   isImportant?: boolean; // For Highlights/Lowlights styling
-}> = ({ label, value, onChange, multiline, isImportant }) => {
+  id?: string; // Add ID for anchor scrolling
+}> = ({ label, value, onChange, multiline, isImportant, id }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   
@@ -173,7 +174,9 @@ const TranslationUnit: React.FC<{
   const isSuspicious = en && cn && cn.length < en.length * 0.2;
 
   return (
-    <div className={`group mb-4 rounded-xl border transition-all duration-200 ${
+    <div 
+      id={id}
+      className={`group mb-4 rounded-xl border transition-all duration-200 ${
       isEditing 
         ? 'bg-white ring-2 ring-indigo-500 border-transparent shadow-lg z-10' 
         : 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-sm'
@@ -334,115 +337,195 @@ const JsonEditor: React.FC<JsonEditorProps> = ({ data, onChange }) => {
     onChange({ ...data, section_dimension: newSections });
   };
 
+  // --- NAVIGATION HELPER ---
+  const scrollTo = (id: string, expandIndex?: number) => {
+    if (expandIndex !== undefined) {
+      setExpandedSections(prev => {
+        const next = new Set(prev);
+        next.add(expandIndex);
+        return next;
+      });
+      // Small delay to allow DOM render before scrolling
+      setTimeout(() => {
+        const el = document.getElementById(id);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 50);
+    } else {
+        const el = document.getElementById(id);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   return (
-    <div className="h-full overflow-y-auto p-4 sm:p-8 space-y-8 pb-32">
+    <div className="flex h-full overflow-hidden">
       
-      {/* GLOBAL DIMENSION */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
-        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-             <span className="material-icons text-indigo-400">public</span>
-             <h2 className="text-lg font-bold">Global Dimension</h2>
-          </div>
-        </div>
-        <div className="p-6">
-          <div className="mb-6">
-            <TranslationUnit 
-              label="Song Description" 
-              value={data.global_dimension.description} 
-              onChange={(val) => updateGlobal('description', val)} 
-              multiline 
-            />
-          </div>
+      {/* --- SIDEBAR OUTLINE --- */}
+      <div className="hidden md:flex flex-col w-64 bg-white border-r border-slate-200 overflow-y-auto flex-shrink-0 z-10 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)]">
+         <div className="p-4 border-b border-slate-100 bg-slate-50/50 sticky top-0 backdrop-blur-sm z-10">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Document Outline</h3>
+         </div>
+         
+         <div className="p-2 space-y-1">
+            {/* Global Group */}
+            <div className="mb-4">
+               <button 
+                 onClick={() => scrollTo('global-section')}
+                 className="w-full text-left px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-2 group"
+               >
+                 <span className="material-icons text-sm text-indigo-400 group-hover:text-indigo-600">public</span>
+                 Global Dimension
+               </button>
+               <div className="ml-8 mt-1 space-y-1 border-l-2 border-slate-100">
+                  <button onClick={() => scrollTo('global-desc')} className="block w-full text-left pl-3 py-1 text-xs text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-r">Description</button>
+                  <button onClick={() => scrollTo('global-facts')} className="block w-full text-left pl-3 py-1 text-xs text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-r">Fact Keywords</button>
+                  <button onClick={() => scrollTo('global-high')} className="block w-full text-left pl-3 py-1 text-xs text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-r">Highlights</button>
+                  <button onClick={() => scrollTo('global-low')} className="block w-full text-left pl-3 py-1 text-xs text-slate-500 hover:text-indigo-600 hover:bg-slate-50 rounded-r">Lowlights</button>
+               </div>
+            </div>
 
-          <DictionaryBlock 
-             title="Fact Keywords" 
-             data={data.global_dimension.fact_keywords}
-             onChange={(val) => updateGlobal('fact_keywords', val)}
-          />
-
-          <DictionaryBlock 
-             title="Creative Highlights" 
-             data={data.global_dimension.highlights}
-             onChange={(val) => updateGlobal('highlights', val)}
-             important
-          />
-
-          <DictionaryBlock 
-             title="Improvement Areas (Lowlights)" 
-             data={data.global_dimension.lowlights}
-             onChange={(val) => updateGlobal('lowlights', val)}
-          />
-        </div>
+            {/* Timeline Group */}
+            <div>
+              <h4 className="px-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Timeline Analysis</h4>
+              {data.section_dimension.map((sec, idx) => (
+                 <button
+                   key={idx}
+                   onClick={() => scrollTo(`section-${idx}`, idx)}
+                   className="w-full text-left px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-indigo-700 rounded-lg flex items-center gap-2 group transition-colors"
+                 >
+                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${expandedSections.has(idx) ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600'}`}>
+                     {idx + 1}
+                   </span>
+                   <div className="flex-1 truncate">
+                      <span className="font-mono mr-1 opacity-70">[{sec.timestamp || '0:00'}]</span>
+                      <span className="truncate">{sec.id || 'No ID'}</span>
+                   </div>
+                 </button>
+              ))}
+            </div>
+         </div>
       </div>
 
-      {/* SECTION DIMENSIONS */}
-      <div className="space-y-4">
-         <h3 className="text-slate-500 font-bold uppercase text-xs tracking-wider px-2">Timeline Analysis</h3>
-         
-         {data.section_dimension.map((section, idx) => (
-           <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in-up" style={{ animationDelay: `${idx * 50}ms` }}>
-              <div 
-                className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-slate-50 transition-colors select-none"
-                onClick={() => toggleSection(idx)}
-              >
-                 <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-bold">
-                       {idx + 1}
-                    </div>
-                    <div>
-                       <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-800 text-sm">Section ID: {section.id || 'N/A'}</span>
-                          <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono">
-                             {section.timestamp || '00:00'}
-                          </span>
-                       </div>
-                    </div>
-                 </div>
-                 <span className={`material-icons text-slate-400 transition-transform duration-300 ${expandedSections.has(idx) ? 'rotate-180' : ''}`}>
-                    expand_more
-                 </span>
-              </div>
+      {/* --- MAIN EDITOR CONTENT --- */}
+      <div className="flex-1 h-full overflow-y-auto p-4 sm:p-8 space-y-8 pb-32 bg-slate-50/50 scroll-smooth" id="editor-scroller">
+        
+        {/* GLOBAL DIMENSION */}
+        <div id="global-section" className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+          <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="material-icons text-indigo-400">public</span>
+              <h2 className="text-lg font-bold">Global Dimension</h2>
+            </div>
+          </div>
+          <div className="p-6">
+            <div className="mb-6" id="global-desc">
+              <TranslationUnit 
+                label="Song Description" 
+                value={data.global_dimension.description} 
+                onChange={(val) => updateGlobal('description', val)} 
+                multiline 
+              />
+            </div>
 
-              {expandedSections.has(idx) && (
-                 <div className="p-6 border-t border-slate-100 bg-slate-50/30">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                       <TranslationUnit 
-                          label="Section Description"
-                          value={section.description}
-                          onChange={(val) => updateSection(idx, 'description', val)}
-                          multiline
-                       />
-                       <TranslationUnit 
-                          label="Lyrics / Content"
-                          value={section.lyrics}
-                          onChange={(val) => updateSection(idx, 'lyrics', val)}
-                          multiline
-                       />
-                    </div>
+            <div id="global-facts">
+                <DictionaryBlock 
+                title="Fact Keywords" 
+                data={data.global_dimension.fact_keywords}
+                onChange={(val) => updateGlobal('fact_keywords', val)}
+                />
+            </div>
 
-                    <DictionaryBlock 
-                       title="Technical Keywords"
-                       data={section.keywords}
-                       onChange={(val) => updateSection(idx, 'keywords', val)}
-                    />
+            <div id="global-high">
+                <DictionaryBlock 
+                title="Creative Highlights" 
+                data={data.global_dimension.highlights}
+                onChange={(val) => updateGlobal('highlights', val)}
+                important
+                />
+            </div>
 
-                    <DictionaryBlock 
-                       title="Highlights"
-                       data={section.highlights}
-                       onChange={(val) => updateSection(idx, 'highlights', val)}
-                       important
-                    />
-                    
-                     <DictionaryBlock 
-                       title="Lowlights"
-                       data={section.lowlights}
-                       onChange={(val) => updateSection(idx, 'lowlights', val)}
-                    />
-                 </div>
-              )}
-           </div>
-         ))}
+            <div id="global-low">
+                <DictionaryBlock 
+                title="Improvement Areas (Lowlights)" 
+                data={data.global_dimension.lowlights}
+                onChange={(val) => updateGlobal('lowlights', val)}
+                />
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION DIMENSIONS */}
+        <div className="space-y-4">
+          <h3 className="text-slate-500 font-bold uppercase text-xs tracking-wider px-2">Timeline Analysis</h3>
+          
+          {data.section_dimension.map((section, idx) => (
+            <div 
+              key={idx} 
+              id={`section-${idx}`}
+              className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in-up" 
+              style={{ animationDelay: `${idx * 50}ms` }}
+            >
+                <div 
+                  className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+                  onClick={() => toggleSection(idx)}
+                >
+                  <div className="flex items-center gap-4">
+                      <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-bold">
+                        {idx + 1}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-800 text-sm">Section ID: {section.id || 'N/A'}</span>
+                            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono">
+                              {section.timestamp || '00:00'}
+                            </span>
+                        </div>
+                      </div>
+                  </div>
+                  <span className={`material-icons text-slate-400 transition-transform duration-300 ${expandedSections.has(idx) ? 'rotate-180' : ''}`}>
+                      expand_more
+                  </span>
+                </div>
+
+                {expandedSections.has(idx) && (
+                  <div className="p-6 border-t border-slate-100 bg-slate-50/30">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                        <TranslationUnit 
+                            label="Section Description"
+                            value={section.description}
+                            onChange={(val) => updateSection(idx, 'description', val)}
+                            multiline
+                        />
+                        <TranslationUnit 
+                            label="Lyrics / Content"
+                            value={section.lyrics}
+                            onChange={(val) => updateSection(idx, 'lyrics', val)}
+                            multiline
+                        />
+                      </div>
+
+                      <DictionaryBlock 
+                        title="Technical Keywords"
+                        data={section.keywords}
+                        onChange={(val) => updateSection(idx, 'keywords', val)}
+                      />
+
+                      <DictionaryBlock 
+                        title="Highlights"
+                        data={section.highlights}
+                        onChange={(val) => updateSection(idx, 'highlights', val)}
+                        important
+                      />
+                      
+                      <DictionaryBlock 
+                        title="Lowlights"
+                        data={section.lowlights}
+                        onChange={(val) => updateSection(idx, 'lowlights', val)}
+                      />
+                  </div>
+                )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

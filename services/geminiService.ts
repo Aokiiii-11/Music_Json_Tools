@@ -20,31 +20,30 @@ const callCustomApi = async (prompt: string, settings: ApiSettings): Promise<str
     try {
       headers = JSON.parse(trimmedHeaders);
     } catch (e) {
-      throw new Error(`Invalid Custom Headers format. Must be valid JSON. Error: ${(e as Error).message}`);
+      // If parsing fails but it's empty string, fine. If not empty, throw.
+      if (trimmedHeaders.length > 0) {
+        throw new Error(`Invalid Custom Headers format. Must be valid JSON. Error: ${(e as Error).message}`);
+      }
     }
   }
 
   // 2. Prepare Body
-  // Strategy: Replace {{prompt}} with the JSON-escaped string content WITHOUT surrounding quotes,
-  // assuming the user provided the surrounding quotes in the template or left them out for numbers/bools.
-  // We strictly support string injection here.
-  const escapedPrompt = JSON.stringify(prompt); // This includes start/end quotes: "prompt..."
+  const escapedPrompt = JSON.stringify(prompt); 
   
   let bodyStr = customBodyTemplate;
   
-  // Check if template has quotes around the placeholder like "{{prompt}}"
-  // If so, we should remove the quotes from our escaped string or the template.
   if (bodyStr.includes('"{{prompt}}"')) {
-     // User wrote "key": "{{prompt}}". 
-     // escapedPrompt is "text". 
-     // We want "key": "text".
-     // So we replace "{{prompt}}" with escapedPrompt.
      bodyStr = bodyStr.replace('"{{prompt}}"', escapedPrompt);
   } else {
-     // User wrote "key": {{prompt}}.
-     // We replace {{prompt}} with escapedPrompt.
      bodyStr = bodyStr.replace('{{prompt}}', escapedPrompt);
   }
+
+  // DEBUG LOGGING
+  console.log("%c[CustomAPI] Request:", "color: #8b5cf6; font-weight: bold;");
+  console.log("URL:", customUrl);
+  console.log("Method:", customMethod);
+  console.log("Headers:", headers);
+  console.log("Body:", bodyStr);
 
   // 3. Fetch
   let response;
@@ -60,10 +59,12 @@ const callCustomApi = async (prompt: string, settings: ApiSettings): Promise<str
 
   if (!response.ok) {
     const errText = await response.text();
+    console.error("[CustomAPI] Error Response:", errText);
     throw new Error(`Custom API Error (${response.status}): ${errText}`);
   }
 
   const json = await response.json();
+  console.log("[CustomAPI] Success Response:", json);
   
   // 4. Extract Response
   const resultText = getNestedValue(json, customResponsePath);
@@ -102,11 +103,7 @@ export const translateJson = async (jsonData: any, customPrompt?: string, apiSet
   const jsonString = JSON.stringify(jsonData);
   
   // Construct the full prompt content
-  // Note: For Gemini SDK we pass systemInstruction separately.
-  // For Custom API, we usually need to combine them.
   const fullPromptForCustom = `${systemInstruction}\n\nTask: Please translate the following JSON:\n\n\`\`\`json\n${jsonString}\n\`\`\``;
-  
-  // For Gemini SDK, we use just the user prompt
   const geminiUserPrompt = `Please translate the following JSON:\n\n\`\`\`json\n${jsonString}\n\`\`\``;
 
   let lastError;
@@ -136,14 +133,12 @@ export const translateJson = async (jsonData: any, customPrompt?: string, apiSet
       // Robust JSON Extraction
       let cleanText = text.replace(/```json\n?|\n?```/g, '').trim();
       
-      // Sometimes models return text before the JSON block
       const firstBrace = cleanText.indexOf('{');
       const firstBracket = cleanText.indexOf('[');
       const startIdx = (firstBrace === -1) ? firstBracket : (firstBracket === -1) ? firstBrace : Math.min(firstBrace, firstBracket);
       
       if (startIdx !== -1) {
           cleanText = cleanText.substring(startIdx);
-          // Try to find the last closing brace/bracket
           const lastBrace = cleanText.lastIndexOf('}');
           const lastBracket = cleanText.lastIndexOf(']');
           const endIdx = Math.max(lastBrace, lastBracket);

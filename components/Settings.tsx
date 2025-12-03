@@ -17,6 +17,13 @@ const PRESETS = {
     body: '{\n  "bot_id": "YOUR_BOT_ID",\n  "user": "user_123456",\n  "query": {{prompt}},\n  "stream": false\n}',
     path: 'messages.0.content'
   },
+  COZE_V3: {
+    url: 'https://api.coze.cn/v3/chat',
+    method: 'POST',
+    headers: '{\n  "Content-Type": "application/json",\n  "Authorization": "Bearer YOUR_PAT_TOKEN"\n}',
+    body: '{\n  "bot_id": "YOUR_BOT_ID",\n  "user_id": "user_123",\n  "stream": false,\n  "auto_save_history": true,\n  "additional_messages": [\n    {\n      "role": "user",\n      "content": {{prompt}},\n      "content_type": "text"\n    }\n  ]\n}',
+    path: 'data.status' // Warning: V3 is async, this path might only show "created"
+  },
   OPENAI: {
     url: 'https://api.openai.com/v1/chat/completions',
     method: 'POST',
@@ -37,6 +44,11 @@ const Settings: React.FC<SettingsProps> = ({
   const [localSettings, setLocalSettings] = useState<ApiSettings>(apiSettings);
   const [isSaved, setIsSaved] = useState(false);
   const [errors, setErrors] = useState<{[key: string]: string}>({});
+  
+  // Curl Import State
+  const [showCurlImport, setShowCurlImport] = useState(false);
+  const [curlInput, setCurlInput] = useState('');
+  const [curlError, setCurlError] = useState('');
 
   // Sync props to state if they change externally
   useEffect(() => {
@@ -90,7 +102,7 @@ const Settings: React.FC<SettingsProps> = ({
     }
   };
 
-  const applyPreset = (type: 'COZE_V2' | 'OPENAI') => {
+  const applyPreset = (type: keyof typeof PRESETS) => {
     const preset = PRESETS[type];
     const newSettings = {
       ...localSettings,
@@ -105,6 +117,81 @@ const Settings: React.FC<SettingsProps> = ({
     // Re-validate
     validateJsonField('customHeaders', preset.headers);
     validateJsonField('customBodyTemplate', preset.body);
+  };
+
+  const handleImportCurl = () => {
+    setCurlError('');
+    try {
+      let cmd = curlInput.trim();
+      if (!cmd) return;
+
+      // 1. Method
+      let method: 'GET' | 'POST' = 'GET';
+      if (cmd.match(/-X\s+POST/i) || cmd.match(/--data/i) || cmd.match(/-d\s/)) {
+        method = 'POST';
+      }
+      
+      // 2. URL
+      const urlMatch = cmd.match(/['"](https?:\/\/[^'"]+)['"]/);
+      let url = urlMatch ? urlMatch[1] : '';
+      if (!url) {
+         const urlMatch2 = cmd.match(/(https?:\/\/[^\s]+)/);
+         url = urlMatch2 ? urlMatch2[1] : '';
+      }
+
+      // 3. Headers
+      const headers: Record<string, string> = {};
+      // Match -H "Key: Value" or -H 'Key: Value'
+      // Using a regex that captures the content inside quotes after -H
+      const headerRegex = /-H\s+['"]([^'"]+)['"]/g;
+      let match;
+      while ((match = headerRegex.exec(cmd)) !== null) {
+        const headerContent = match[1];
+        const firstColon = headerContent.indexOf(':');
+        if (firstColon > -1) {
+            const key = headerContent.substring(0, firstColon).trim();
+            const val = headerContent.substring(firstColon + 1).trim();
+            headers[key] = val;
+        }
+      }
+
+      // 4. Body
+      let body = '';
+      // Try to find -d '...' or --data '...'
+      // We look for the flag, whitespace, quote, then capture until next quote.
+      // Note: This is a simple parser and might fail on nested escaped quotes.
+      const bodyMatch = cmd.match(/(-d|--data|--data-raw)\s+['"]({[\s\S]*?})['"]/);
+      if (bodyMatch) {
+         body = bodyMatch[2];
+      }
+      
+      if (!url && Object.keys(headers).length === 0 && !body) {
+          throw new Error("Could not extract URL, Headers, or Body from text.");
+      }
+
+      const newSettings = {
+        ...localSettings,
+        provider: ApiProvider.CUSTOM,
+        customUrl: url || localSettings.customUrl,
+        customMethod: method,
+        customHeaders: JSON.stringify(headers, null, 2),
+        customBodyTemplate: body || localSettings.customBodyTemplate,
+      };
+
+      setLocalSettings(newSettings);
+      setShowCurlImport(false);
+      setCurlInput('');
+      
+      // Trigger validation updates
+      if (Object.keys(headers).length > 0) validateJsonField('customHeaders', JSON.stringify(headers, null, 2));
+      if (body) validateJsonField('customBodyTemplate', body);
+      
+      alert("Configuration loaded from cURL! Please review the fields.");
+
+    } catch (e) {
+      setCurlError("Failed to parse cURL. Ensure it is a valid format.");
+      console.error(e);
+    }
   };
 
   return (
@@ -173,22 +260,67 @@ const Settings: React.FC<SettingsProps> = ({
           ) : (
             <div className="space-y-6 animate-fade-in">
                
-               {/* Presets */}
-               <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase">Quick Presets:</span>
+               {/* Controls Bar */}
+               <div className="flex items-center justify-between gap-2 mb-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-400 uppercase">Presets:</span>
+                    <button 
+                        onClick={() => applyPreset('COZE_V2')}
+                        className="px-2 py-1 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs rounded border border-slate-200 transition-colors shadow-sm"
+                    >
+                        Coze V2
+                    </button>
+                     <button 
+                        onClick={() => applyPreset('COZE_V3')}
+                        className="px-2 py-1 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs rounded border border-slate-200 transition-colors shadow-sm"
+                        title="Experimental: Coze V3 is async and may require complex polling."
+                    >
+                        Coze V3
+                    </button>
+                    <button 
+                        onClick={() => applyPreset('OPENAI')}
+                        className="px-2 py-1 bg-white hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs rounded border border-slate-200 transition-colors shadow-sm"
+                    >
+                        OpenAI
+                    </button>
+                  </div>
                   <button 
-                    onClick={() => applyPreset('COZE_V2')}
-                    className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs rounded border border-slate-200 transition-colors"
+                     onClick={() => setShowCurlImport(!showCurlImport)}
+                     className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
                   >
-                    Load Coze V2 Config
-                  </button>
-                  <button 
-                    onClick={() => applyPreset('OPENAI')}
-                    className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs rounded border border-slate-200 transition-colors"
-                  >
-                    Load OpenAI Config
+                     <span className="material-icons text-sm">code</span>
+                     Import Config from cURL
                   </button>
                </div>
+
+               {/* cURL Import Panel */}
+               {showCurlImport && (
+                   <div className="bg-slate-800 rounded-lg p-4 animate-fade-in">
+                       <label className="block text-xs font-bold text-slate-300 uppercase mb-2">Paste cURL Command</label>
+                       <textarea
+                          value={curlInput}
+                          onChange={(e) => setCurlInput(e.target.value)}
+                          placeholder="curl -X POST https://api... -H ... -d ..."
+                          className="w-full p-3 bg-slate-900 text-green-400 font-mono text-xs rounded border border-slate-700 focus:border-indigo-500 outline-none mb-3"
+                          rows={4}
+                       />
+                       {curlError && <p className="text-red-400 text-xs mb-2">{curlError}</p>}
+                       <div className="flex justify-end gap-2">
+                           <button 
+                              onClick={() => setShowCurlImport(false)}
+                              className="px-3 py-1.5 text-slate-400 hover:text-white text-xs"
+                           >
+                              Cancel
+                           </button>
+                           <button 
+                              onClick={handleImportCurl}
+                              className="px-3 py-1.5 bg-indigo-600 text-white rounded text-xs font-bold hover:bg-indigo-500"
+                           >
+                              Parse & Apply
+                           </button>
+                       </div>
+                   </div>
+               )}
 
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="md:col-span-3">
@@ -234,6 +366,9 @@ const Settings: React.FC<SettingsProps> = ({
                         : 'border-slate-700 focus:ring-2 focus:ring-indigo-500'
                     }`}
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                      Must be valid JSON. Keys and values must be in double quotes.
+                  </p>
                </div>
 
                <div>

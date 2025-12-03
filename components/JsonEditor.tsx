@@ -108,24 +108,24 @@ const InteractiveText: React.FC<{
   );
 };
 
-/**
- * The core component for editing a Bilingual pair.
- * Handles the "En | Cn" logic, View/Edit toggle, Hover sync, and Selection sync.
- */
-const TranslationUnit: React.FC<{
+interface TranslationUnitProps {
   label: string;
-  value: any; // Accept any to prevent runtime crashes with numbers/null
+  value: any;
   onChange: (val: string) => void;
   multiline?: boolean;
-  isImportant?: boolean; // For Highlights/Lowlights styling
-  id?: string; // Add ID for anchor scrolling
-}> = ({ label, value, onChange, multiline, isImportant, id }) => {
+  isImportant?: boolean;
+  id?: string;
+}
+
+/**
+ * The core component for editing a Bilingual pair.
+ * Handles the "En | Cn" logic, View/Edit toggle, Hover sync, Selection sync, and Segmented Editing.
+ */
+const TranslationUnit: React.FC<TranslationUnitProps> = ({ label, value, onChange, multiline, isImportant, id }) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [segmentMode, setSegmentMode] = useState(false); // Toggle for Segmented Editor
   
-  // Selection State: [SourceIndices, TargetIndices]
-  // Ideally, if I select Source, Target highlights. If I select Target, Source highlights.
-  // We keep track of which indices are "active" for cross-highlighting.
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [crossHighlightIndices, setCrossHighlightIndices] = useState<number[]>([]);
 
   // Parse Value safely
@@ -152,26 +152,67 @@ const TranslationUnit: React.FC<{
   const handleSave = () => {
     const cleanEn = editEn.trim();
     const cleanCn = editCn.trim();
-    if (!cleanEn && !cleanCn) onChange('');
-    else if (cleanEn && !cleanCn) onChange(cleanEn);
-    else if (!cleanEn && cleanCn) onChange(cleanCn); 
-    else onChange(`${cleanEn} | ${cleanCn}`);
+    
+    // Logic: If Source is deleted, remove entry.
+    if (!cleanEn) {
+       onChange('');
+    } else {
+       if (cleanCn) {
+         onChange(`${cleanEn} | ${cleanCn}`);
+       } else {
+         onChange(cleanEn);
+       }
+    }
     setIsEditing(false);
+    setSegmentMode(false);
+  };
+
+  // --- Segmented Mode Helpers ---
+  const getSegments = (text: string) => splitIntoSentences(text);
+  
+  // When switching TO segment mode, we don't need to do anything special as we calculate segments on render
+  // When switching FROM segment mode (or saving), we are just using the editEn/editCn strings which are updated live.
+
+  const updateSegment = (idx: number, type: 'en'|'cn', newVal: string) => {
+    const segmentsEn = getSegments(editEn);
+    const segmentsCn = getSegments(editCn);
+    
+    // Ensure arrays are long enough if we are editing a tail that didn't exist? 
+    // Actually, splitting splits the WHOLE string. 
+    
+    if (type === 'en') {
+      segmentsEn[idx] = newVal;
+      setEditEn(segmentsEn.join(''));
+    } else {
+      segmentsCn[idx] = newVal;
+      setEditCn(segmentsCn.join(''));
+    }
+  };
+
+  const deleteSegmentPair = (idx: number) => {
+    const segmentsEn = getSegments(editEn);
+    const segmentsCn = getSegments(editCn);
+    
+    // Remove at index
+    if (idx < segmentsEn.length) segmentsEn.splice(idx, 1);
+    if (idx < segmentsCn.length) segmentsCn.splice(idx, 1);
+    
+    setEditEn(segmentsEn.join(''));
+    setEditCn(segmentsCn.join(''));
   };
 
   // Selection Handlers
-  // When Source is selected, we want to highlight Target at those indices
-  const handleSourceSelection = (indices: number[]) => {
-      setCrossHighlightIndices(indices);
-  };
-
-  // When Target is selected, we want to highlight Source at those indices
-  const handleTargetSelection = (indices: number[]) => {
-      setCrossHighlightIndices(indices);
-  };
+  const handleSourceSelection = (indices: number[]) => setCrossHighlightIndices(indices);
+  const handleTargetSelection = (indices: number[]) => setCrossHighlightIndices(indices);
 
   const isMissingTranslation = en && !cn;
   const isSuspicious = en && cn && cn.length < en.length * 0.2;
+
+  // Prepare segments for rendering in Segment Mode
+  const segmentsEn = useMemo(() => getSegments(editEn), [editEn]);
+  const segmentsCn = useMemo(() => getSegments(editCn), [editCn]);
+  const maxSegments = Math.max(segmentsEn.length, segmentsCn.length);
+  const segmentRows = Array.from({ length: maxSegments }, (_, i) => i);
 
   return (
     <div 
@@ -193,55 +234,107 @@ const TranslationUnit: React.FC<{
                <span className="material-icons text-[10px]">warning</span> Missing Translation
              </span>
            )}
-           {!isEditing && !isMissingTranslation && isSuspicious && (
-              <span className="flex items-center gap-1 text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-medium">
-                <span className="material-icons text-[10px]">analytics</span> Check Accuracy
-              </span>
-           )}
         </div>
         
-        <button 
-          onClick={() => {
-             if (isEditing) handleSave();
-             else setIsEditing(true);
-          }}
-          className={`text-xs font-medium px-2 py-1 rounded transition-colors ${
-            isEditing 
-              ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
-              : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
-          }`}
-        >
-          {isEditing ? 'DONE' : 'EDIT'}
-        </button>
+        <div className="flex items-center gap-2">
+          {isEditing && (
+            <button
+              onClick={() => setSegmentMode(!segmentMode)}
+              className={`p-1 rounded hover:bg-slate-200 transition-colors ${segmentMode ? 'text-indigo-600 bg-indigo-50' : 'text-slate-400'}`}
+              title={segmentMode ? "Switch to Text View" : "Switch to Segment View (Line-by-Line)"}
+            >
+              <span className="material-icons text-sm">{segmentMode ? 'article' : 'view_list'}</span>
+            </button>
+          )}
+          <button 
+            onClick={() => {
+               if (isEditing) handleSave();
+               else setIsEditing(true);
+            }}
+            className={`text-xs font-medium px-2 py-1 rounded transition-colors ${
+              isEditing 
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+            }`}
+          >
+            {isEditing ? 'DONE' : 'EDIT'}
+          </button>
+        </div>
       </div>
 
       {/* Content Area */}
       <div className="p-0">
         {isEditing ? (
           // --- EDIT MODE ---
-          <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
-             <div className="flex-1 p-2 bg-slate-50/30">
-               <div className="text-[10px] text-slate-400 font-mono mb-1 uppercase">English Source</div>
-               <textarea
-                 className="w-full bg-transparent border-none outline-none text-sm text-slate-800 placeholder-slate-300 resize-none font-medium h-full min-h-[80px]"
-                 value={editEn}
-                 onChange={(e) => setEditEn(e.target.value)}
-                 placeholder="English text..."
-                 rows={multiline ? 6 : 2}
-                 autoFocus
-               />
-             </div>
-             <div className="flex-1 p-2">
-               <div className="text-[10px] text-indigo-300 font-mono mb-1 uppercase">Chinese Translation</div>
-               <textarea
-                 className="w-full bg-transparent border-none outline-none text-sm text-slate-800 placeholder-indigo-100 resize-none h-full min-h-[80px]"
-                 value={editCn}
-                 onChange={(e) => setEditCn(e.target.value)}
-                 placeholder="Translation..."
-                 rows={multiline ? 6 : 2}
-               />
-             </div>
-          </div>
+          <>
+            {segmentMode ? (
+               // SEGMENT MODE
+               <div className="p-2 bg-slate-50/50 max-h-[400px] overflow-y-auto">
+                 <div className="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2 px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    <div>Source Segment</div>
+                    <div>Translation Segment</div>
+                    <div></div>
+                 </div>
+                 {segmentRows.map((idx) => (
+                   <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2 items-start group/row">
+                      <textarea 
+                        value={segmentsEn[idx] || ''}
+                        onChange={(e) => updateSegment(idx, 'en', e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none resize-none"
+                        rows={2}
+                      />
+                      <textarea 
+                        value={segmentsCn[idx] || ''}
+                        onChange={(e) => updateSegment(idx, 'cn', e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded p-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none resize-none"
+                        rows={2}
+                      />
+                      <button 
+                        onClick={() => deleteSegmentPair(idx)}
+                        className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors mt-1"
+                        title="Delete this pair"
+                      >
+                         <span className="material-icons text-sm">delete</span>
+                      </button>
+                   </div>
+                 ))}
+                 {segmentRows.length === 0 && (
+                   <div className="text-center py-4 text-slate-400 text-xs italic">No text segments found. Switch to Text View to add content.</div>
+                 )}
+               </div>
+            ) : (
+               // RAW TEXT MODE
+               <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+                  <div className="flex-1 p-2 bg-slate-50/30">
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="text-[10px] text-slate-400 font-mono uppercase">English Source</div>
+                      {!editEn && (
+                        <div className="text-[9px] text-red-400 font-bold uppercase">Will delete entry</div>
+                      )}
+                    </div>
+                    <textarea
+                      className="w-full bg-transparent border-none outline-none text-sm text-slate-800 placeholder-slate-300 resize-none font-medium h-full min-h-[80px]"
+                      value={editEn}
+                      onChange={(e) => setEditEn(e.target.value)}
+                      placeholder="English text..."
+                      rows={multiline ? 6 : 2}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex-1 p-2">
+                    <div className="text-[10px] text-indigo-300 font-mono mb-1 uppercase">Chinese Translation</div>
+                    <textarea
+                      className={`w-full bg-transparent border-none outline-none text-sm text-slate-800 placeholder-indigo-100 resize-none h-full min-h-[80px] transition-opacity ${!editEn ? 'opacity-30' : 'opacity-100'}`}
+                      value={editCn}
+                      onChange={(e) => setEditCn(e.target.value)}
+                      placeholder="Translation..."
+                      rows={multiline ? 6 : 2}
+                      disabled={!editEn}
+                    />
+                  </div>
+               </div>
+            )}
+          </>
         ) : (
           // --- VIEW MODE (With Interaction) ---
           <div 
@@ -345,7 +438,6 @@ const JsonEditor: React.FC<JsonEditorProps> = ({ data, onChange }) => {
         next.add(expandIndex);
         return next;
       });
-      // Small delay to allow DOM render before scrolling
       setTimeout(() => {
         const el = document.getElementById(id);
         el?.scrollIntoView({ behavior: 'smooth', block: 'start' });

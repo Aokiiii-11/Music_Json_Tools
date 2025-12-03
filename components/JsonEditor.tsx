@@ -1,0 +1,451 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { MusicData, GlobalDimension, SectionDimension } from '../types';
+
+interface JsonEditorProps {
+  data: MusicData;
+  onChange: (newData: MusicData) => void;
+}
+
+// --- UTILITIES FOR SENTENCE SPLITTING ---
+
+/**
+ * Splits text into sentences/segments for highlighting.
+ * Handles English (.!?) and Chinese (。！？) delimiters.
+ * Safe against non-string inputs.
+ */
+const splitIntoSentences = (text: any): string[] => {
+  if (typeof text !== 'string') return [String(text || '')];
+  if (!text) return [];
+  // Regex looks for punctuation followed by space or end of string, OR newline
+  const segmenter = /[^.!?。！？\n]+[.!?。！？\n]*|[\n]+/g;
+  const matches = text.match(segmenter);
+  return matches ? Array.from(matches) : [text];
+};
+
+// --- SUB-COMPONENTS ---
+
+/**
+ * Renders a list of interactive sentences.
+ * Supports Hover and Selection events.
+ */
+const InteractiveText: React.FC<{
+  text: string;
+  isSource: boolean;
+  hoverIndex: number | null;
+  onHover: (index: number | null) => void;
+  // New props for selection sync
+  highlightIndices: number[];
+  onSelection: (indices: number[]) => void;
+}> = ({ text, isSource, hoverIndex, onHover, highlightIndices, onSelection }) => {
+  const safeText = typeof text === 'string' ? text : String(text || '');
+  const sentences = useMemo(() => splitIntoSentences(safeText), [safeText]);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Handle Text Selection
+  const handleMouseUp = () => {
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    // If selection is collapsed (just a cursor click), clear selection
+    if (selection.isCollapsed) {
+      onSelection([]);
+      return;
+    }
+
+    // Check if the selection happened inside this container
+    if (containerRef.current && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      if (containerRef.current.contains(range.commonAncestorContainer)) {
+        const selectedIndices: number[] = [];
+        const spans = containerRef.current.querySelectorAll('[data-index]');
+        
+        spans.forEach((span) => {
+          if (selection.containsNode(span, true)) { // true = allow partial containment
+             const idx = parseInt(span.getAttribute('data-index') || '-1');
+             if (idx !== -1) selectedIndices.push(idx);
+          }
+        });
+
+        if (selectedIndices.length > 0) {
+           onSelection(selectedIndices);
+        } else {
+           onSelection([]);
+        }
+      }
+    }
+  };
+
+  if (!safeText) return <span className="text-slate-300 italic">Empty</span>;
+
+  return (
+    <div 
+      ref={containerRef}
+      className={`whitespace-pre-wrap leading-relaxed ${isSource ? 'text-slate-700' : 'text-slate-800'}`}
+      onMouseUp={handleMouseUp}
+    >
+      {sentences.map((sentence, idx) => {
+        // Determine highlighting state
+        const isSelectedByOther = highlightIndices.includes(idx);
+        const isHovered = hoverIndex === idx && highlightIndices.length === 0; // Selection takes priority over hover
+
+        let bgClass = '';
+        if (isSelectedByOther) bgClass = 'bg-yellow-200'; // Stronger highlight for selection
+        else if (isHovered) bgClass = 'bg-yellow-100'; // Softer highlight for hover
+
+        return (
+          <span
+            key={idx}
+            data-index={idx}
+            className={`sentence-span ${bgClass} transition-colors duration-200 rounded-sm px-0.5`}
+            onMouseEnter={() => onHover(idx)}
+            onMouseLeave={() => onHover(null)}
+          >
+            {sentence}
+          </span>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
+ * The core component for editing a Bilingual pair.
+ * Handles the "En | Cn" logic, View/Edit toggle, Hover sync, and Selection sync.
+ */
+const TranslationUnit: React.FC<{
+  label: string;
+  value: any; // Accept any to prevent runtime crashes with numbers/null
+  onChange: (val: string) => void;
+  multiline?: boolean;
+  isImportant?: boolean; // For Highlights/Lowlights styling
+}> = ({ label, value, onChange, multiline, isImportant }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  
+  // Selection State: [SourceIndices, TargetIndices]
+  // Ideally, if I select Source, Target highlights. If I select Target, Source highlights.
+  // We keep track of which indices are "active" for cross-highlighting.
+  const [crossHighlightIndices, setCrossHighlightIndices] = useState<number[]>([]);
+
+  // Parse Value safely
+  const safeValue = (value === null || value === undefined) ? '' : String(value);
+  const parts = safeValue.split('|');
+  const en = parts[0]?.trim() || '';
+  const cn = parts.length > 1 ? parts.slice(1).join('|').trim() : '';
+
+  // Local state for editing mode
+  const [editEn, setEditEn] = useState(en);
+  const [editCn, setEditCn] = useState(cn);
+
+  // Sync state with props when not editing
+  useEffect(() => {
+    if (!isEditing) {
+      const currentSafeValue = (value === null || value === undefined) ? '' : String(value);
+      const currentParts = currentSafeValue.split('|');
+      setEditEn(currentParts[0]?.trim() || '');
+      setEditCn(currentParts.length > 1 ? currentParts.slice(1).join('|').trim() : '');
+    }
+  }, [value, isEditing]);
+
+  // Sync edits to parent
+  const handleSave = () => {
+    const cleanEn = editEn.trim();
+    const cleanCn = editCn.trim();
+    if (!cleanEn && !cleanCn) onChange('');
+    else if (cleanEn && !cleanCn) onChange(cleanEn);
+    else if (!cleanEn && cleanCn) onChange(cleanCn); 
+    else onChange(`${cleanEn} | ${cleanCn}`);
+    setIsEditing(false);
+  };
+
+  // Selection Handlers
+  // When Source is selected, we want to highlight Target at those indices
+  const handleSourceSelection = (indices: number[]) => {
+      setCrossHighlightIndices(indices);
+  };
+
+  // When Target is selected, we want to highlight Source at those indices
+  const handleTargetSelection = (indices: number[]) => {
+      setCrossHighlightIndices(indices);
+  };
+
+  const isMissingTranslation = en && !cn;
+  const isSuspicious = en && cn && cn.length < en.length * 0.2;
+
+  return (
+    <div className={`group mb-4 rounded-xl border transition-all duration-200 ${
+      isEditing 
+        ? 'bg-white ring-2 ring-indigo-500 border-transparent shadow-lg z-10' 
+        : 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-sm'
+    }`}>
+      
+      {/* Header Bar */}
+      <div className="flex justify-between items-center px-4 py-2 border-b border-slate-50 bg-slate-50/50 rounded-t-xl">
+        <div className="flex items-center gap-2">
+           <span className={`text-xs font-bold uppercase tracking-wider ${isImportant ? 'text-indigo-600' : 'text-slate-500'}`}>
+             {label}
+           </span>
+           {!isEditing && isMissingTranslation && (
+             <span className="flex items-center gap-1 text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded font-medium">
+               <span className="material-icons text-[10px]">warning</span> Missing Translation
+             </span>
+           )}
+           {!isEditing && !isMissingTranslation && isSuspicious && (
+              <span className="flex items-center gap-1 text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-medium">
+                <span className="material-icons text-[10px]">analytics</span> Check Accuracy
+              </span>
+           )}
+        </div>
+        
+        <button 
+          onClick={() => {
+             if (isEditing) handleSave();
+             else setIsEditing(true);
+          }}
+          className={`text-xs font-medium px-2 py-1 rounded transition-colors ${
+            isEditing 
+              ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+              : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'
+          }`}
+        >
+          {isEditing ? 'DONE' : 'EDIT'}
+        </button>
+      </div>
+
+      {/* Content Area */}
+      <div className="p-0">
+        {isEditing ? (
+          // --- EDIT MODE ---
+          <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+             <div className="flex-1 p-2 bg-slate-50/30">
+               <div className="text-[10px] text-slate-400 font-mono mb-1 uppercase">English Source</div>
+               <textarea
+                 className="w-full bg-transparent border-none outline-none text-sm text-slate-800 placeholder-slate-300 resize-none font-medium h-full min-h-[80px]"
+                 value={editEn}
+                 onChange={(e) => setEditEn(e.target.value)}
+                 placeholder="English text..."
+                 rows={multiline ? 6 : 2}
+                 autoFocus
+               />
+             </div>
+             <div className="flex-1 p-2">
+               <div className="text-[10px] text-indigo-300 font-mono mb-1 uppercase">Chinese Translation</div>
+               <textarea
+                 className="w-full bg-transparent border-none outline-none text-sm text-slate-800 placeholder-indigo-100 resize-none h-full min-h-[80px]"
+                 value={editCn}
+                 onChange={(e) => setEditCn(e.target.value)}
+                 placeholder="Translation..."
+                 rows={multiline ? 6 : 2}
+               />
+             </div>
+          </div>
+        ) : (
+          // --- VIEW MODE (With Interaction) ---
+          <div 
+             className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-slate-100 min-h-[60px]"
+             onDoubleClick={() => setIsEditing(true)}
+          >
+             {/* Left Column (Source) */}
+             <div className="flex-1 p-4 bg-slate-50/20 group-hover:bg-slate-50/50 transition-colors">
+                <InteractiveText 
+                  text={en} 
+                  isSource={true} 
+                  hoverIndex={hoverIndex} 
+                  onHover={setHoverIndex}
+                  highlightIndices={crossHighlightIndices} 
+                  onSelection={handleSourceSelection}
+                />
+             </div>
+
+             {/* Right Column (Target) */}
+             <div className="flex-1 p-4 group-hover:bg-indigo-50/5 transition-colors">
+                {cn ? (
+                  <InteractiveText 
+                    text={cn} 
+                    isSource={false} 
+                    hoverIndex={hoverIndex} 
+                    onHover={setHoverIndex}
+                    highlightIndices={crossHighlightIndices} 
+                    onSelection={handleTargetSelection}
+                  />
+                ) : (
+                  <span className="text-slate-300 text-sm italic select-none">No translation provided...</span>
+                )}
+             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- SECTION BLOCKS ---
+
+const DictionaryBlock: React.FC<{
+  data: Record<string, string>;
+  onChange: (newData: Record<string, string>) => void;
+  title: string;
+  important?: boolean;
+}> = ({ data, onChange, title, important }) => {
+  if (!data) return null;
+
+  return (
+    <div className={`mb-6 ${important ? 'bg-indigo-50/50 border border-indigo-100 rounded-xl p-4' : ''}`}>
+      <h4 className={`text-xs font-bold uppercase tracking-wider mb-3 ${important ? 'text-indigo-700' : 'text-slate-400'}`}>
+        {title}
+      </h4>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {Object.entries(data).map(([key, value]) => (
+          <TranslationUnit
+            key={key}
+            label={key}
+            value={value}
+            onChange={(val) => onChange({ ...data, [key]: val })}
+            isImportant={important}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN COMPONENT ---
+
+const JsonEditor: React.FC<JsonEditorProps> = ({ data, onChange }) => {
+  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
+
+  const toggleSection = (index: number) => {
+    const newSet = new Set(expandedSections);
+    if (newSet.has(index)) newSet.delete(index);
+    else newSet.add(index);
+    setExpandedSections(newSet);
+  };
+
+  const updateGlobal = (key: keyof GlobalDimension, val: any) => {
+    onChange({
+      ...data,
+      global_dimension: { ...data.global_dimension, [key]: val }
+    });
+  };
+
+  const updateSection = (index: number, key: keyof SectionDimension, val: any) => {
+    const newSections = [...data.section_dimension];
+    newSections[index] = { ...newSections[index], [key]: val };
+    onChange({ ...data, section_dimension: newSections });
+  };
+
+  return (
+    <div className="h-full overflow-y-auto p-4 sm:p-8 space-y-8 pb-32">
+      
+      {/* GLOBAL DIMENSION */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
+        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+             <span className="material-icons text-indigo-400">public</span>
+             <h2 className="text-lg font-bold">Global Dimension</h2>
+          </div>
+        </div>
+        <div className="p-6">
+          <div className="mb-6">
+            <TranslationUnit 
+              label="Song Description" 
+              value={data.global_dimension.description} 
+              onChange={(val) => updateGlobal('description', val)} 
+              multiline 
+            />
+          </div>
+
+          <DictionaryBlock 
+             title="Fact Keywords" 
+             data={data.global_dimension.fact_keywords}
+             onChange={(val) => updateGlobal('fact_keywords', val)}
+          />
+
+          <DictionaryBlock 
+             title="Creative Highlights" 
+             data={data.global_dimension.highlights}
+             onChange={(val) => updateGlobal('highlights', val)}
+             important
+          />
+
+          <DictionaryBlock 
+             title="Improvement Areas (Lowlights)" 
+             data={data.global_dimension.lowlights}
+             onChange={(val) => updateGlobal('lowlights', val)}
+          />
+        </div>
+      </div>
+
+      {/* SECTION DIMENSIONS */}
+      <div className="space-y-4">
+         <h3 className="text-slate-500 font-bold uppercase text-xs tracking-wider px-2">Timeline Analysis</h3>
+         
+         {data.section_dimension.map((section, idx) => (
+           <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in-up" style={{ animationDelay: `${idx * 50}ms` }}>
+              <div 
+                className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+                onClick={() => toggleSection(idx)}
+              >
+                 <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-bold">
+                       {idx + 1}
+                    </div>
+                    <div>
+                       <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-800 text-sm">Section ID: {section.id || 'N/A'}</span>
+                          <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono">
+                             {section.timestamp || '00:00'}
+                          </span>
+                       </div>
+                    </div>
+                 </div>
+                 <span className={`material-icons text-slate-400 transition-transform duration-300 ${expandedSections.has(idx) ? 'rotate-180' : ''}`}>
+                    expand_more
+                 </span>
+              </div>
+
+              {expandedSections.has(idx) && (
+                 <div className="p-6 border-t border-slate-100 bg-slate-50/30">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                       <TranslationUnit 
+                          label="Section Description"
+                          value={section.description}
+                          onChange={(val) => updateSection(idx, 'description', val)}
+                          multiline
+                       />
+                       <TranslationUnit 
+                          label="Lyrics / Content"
+                          value={section.lyrics}
+                          onChange={(val) => updateSection(idx, 'lyrics', val)}
+                          multiline
+                       />
+                    </div>
+
+                    <DictionaryBlock 
+                       title="Technical Keywords"
+                       data={section.keywords}
+                       onChange={(val) => updateSection(idx, 'keywords', val)}
+                    />
+
+                    <DictionaryBlock 
+                       title="Highlights"
+                       data={section.highlights}
+                       onChange={(val) => updateSection(idx, 'highlights', val)}
+                       important
+                    />
+                    
+                     <DictionaryBlock 
+                       title="Lowlights"
+                       data={section.lowlights}
+                       onChange={(val) => updateSection(idx, 'lowlights', val)}
+                    />
+                 </div>
+              )}
+           </div>
+         ))}
+      </div>
+    </div>
+  );
+};
+
+export default JsonEditor;

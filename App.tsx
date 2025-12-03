@@ -167,6 +167,22 @@ const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // 6. Format / Parse Manually
+  const handleFormat = () => {
+    if (!jsonText.trim()) return;
+    try {
+      const parsed = JSON.parse(jsonText);
+      // Update text to be pretty
+      setJsonText(JSON.stringify(parsed, null, 2));
+      // Ensure data is set
+      setData(parsed);
+      setParseError(null);
+      setLastUpdated(new Date());
+    } catch (e) {
+      setParseError("Invalid JSON syntax");
+    }
+  };
+
   // --- RENDER HELPERS ---
 
   const renderContent = () => {
@@ -198,10 +214,18 @@ const App: React.FC = () => {
                   )}
                </div>
                <div className="flex items-center gap-4 text-xs text-slate-400 font-mono">
+                  <button 
+                    onClick={handleFormat}
+                    className="flex items-center gap-2 px-3 py-1 bg-slate-700 hover:bg-indigo-600 text-slate-200 hover:text-white rounded text-xs font-bold transition-colors border border-slate-600 hover:border-indigo-500"
+                    title="Parse JSON and update editor without translating"
+                  >
+                    <span className="material-icons text-sm">auto_fix_high</span>
+                    Format & Parse
+                  </button>
                   {lastUpdated && (
-                    <span className="flex items-center gap-1 animate-fade-in">
+                    <span className="flex items-center gap-1 animate-fade-in pl-2 border-l border-slate-700">
                        <span className="material-icons text-[12px]">update</span>
-                       Last updated: {lastUpdated.toLocaleTimeString()}
+                       Updated: {lastUpdated.toLocaleTimeString()}
                     </span>
                   )}
                </div>
@@ -212,7 +236,7 @@ const App: React.FC = () => {
               <textarea
                 value={jsonText}
                 onChange={handleTextChange}
-                placeholder='Paste your JSON here to begin...'
+                placeholder='Paste your JSON (Original or Bilingual) here...'
                 className="w-full h-full bg-slate-900 text-slate-300 font-mono text-xs p-4 resize-none focus:outline-none focus:ring-inset focus:ring-2 focus:ring-indigo-500/50 leading-relaxed"
                 spellCheck={false}
               />
@@ -257,6 +281,16 @@ const App: React.FC = () => {
                 </button>
 
                 <div className="h-6 w-px bg-slate-200 mx-2"></div>
+
+                <button 
+                    onClick={() => handleExport(false)}
+                    disabled={!data}
+                    className="flex items-center gap-2 px-4 py-1.5 bg-white border border-slate-300 text-slate-700 rounded-lg font-medium text-xs hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50"
+                    title="Save current state (Bilingual)"
+                >
+                    <span className="material-icons text-sm">save</span>
+                    Save Progress
+                </button>
 
                 <button 
                     onClick={() => handleExport(true)}

@@ -15,27 +15,19 @@ const callCustomApi = async (prompt: string, settings: ApiSettings): Promise<str
   
   // 1. Prepare Headers
   let headers = {};
-  try {
-    headers = JSON.parse(customHeaders);
-  } catch (e) {
-    throw new Error("Invalid Custom Headers format. Must be valid JSON.");
+  const trimmedHeaders = customHeaders.trim();
+  if (trimmedHeaders) {
+    try {
+      headers = JSON.parse(trimmedHeaders);
+    } catch (e) {
+      throw new Error(`Invalid Custom Headers format. Must be valid JSON. Error: ${(e as Error).message}`);
+    }
   }
 
   // 2. Prepare Body
-  // We assume the user placed {{prompt}} where the content should go.
-  // To keep JSON valid, we JSON.stringify the prompt, which gives "quoted string".
-  // If the user's template is "query": {{prompt}}, replacing {{prompt}} with "text" works.
-  // If the user's template is "query": "{{prompt}}", we need to be careful.
-  
-  // Robust Strategy: Replace {{prompt}} with the JSON-escaped string content WITHOUT surrounding quotes,
-  // assuming the user provided the surrounding quotes in the template? 
-  // OR, simply replace {{prompt}} with JSON.stringify(prompt) and assume user did NOT quote it.
-  
-  // Let's assume the user puts: "content": {{prompt}}  <-- this is the safest assumption for JSON injection.
-  // So {{prompt}} becomes "The prompt text..." including the quotes.
-  
-  // However, often textareas act as raw strings.
-  // Let's try to replace `{{prompt}}` with the safely escaped string representation of the prompt.
+  // Strategy: Replace {{prompt}} with the JSON-escaped string content WITHOUT surrounding quotes,
+  // assuming the user provided the surrounding quotes in the template or left them out for numbers/bools.
+  // We strictly support string injection here.
   const escapedPrompt = JSON.stringify(prompt); // This includes start/end quotes: "prompt..."
   
   let bodyStr = customBodyTemplate;
@@ -55,11 +47,16 @@ const callCustomApi = async (prompt: string, settings: ApiSettings): Promise<str
   }
 
   // 3. Fetch
-  const response = await fetch(customUrl, {
-    method: customMethod,
-    headers: headers,
-    body: customMethod === 'POST' ? bodyStr : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(customUrl, {
+      method: customMethod,
+      headers: headers,
+      body: customMethod === 'POST' ? bodyStr : undefined,
+    });
+  } catch (netErr) {
+     throw new Error(`Network request failed: ${(netErr as Error).message}. Check URL and CORS settings.`);
+  }
 
   if (!response.ok) {
     const errText = await response.text();
@@ -72,8 +69,9 @@ const callCustomApi = async (prompt: string, settings: ApiSettings): Promise<str
   const resultText = getNestedValue(json, customResponsePath);
   
   if (typeof resultText !== 'string') {
-    console.warn("Response extracted:", resultText);
-    throw new Error(`Could not find string at path '${customResponsePath}' in response.`);
+    console.warn("Full API Response:", json);
+    console.warn("Failed Path:", customResponsePath);
+    throw new Error(`Could not find text at path '${customResponsePath}'. See console for full response.`);
   }
 
   return resultText;
@@ -137,9 +135,21 @@ export const translateJson = async (jsonData: any, customPrompt?: string, apiSet
 
       // Robust JSON Extraction
       let cleanText = text.replace(/```json\n?|\n?```/g, '').trim();
-      const jsonMatch = cleanText.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-      if (jsonMatch) {
-          cleanText = jsonMatch[0];
+      
+      // Sometimes models return text before the JSON block
+      const firstBrace = cleanText.indexOf('{');
+      const firstBracket = cleanText.indexOf('[');
+      const startIdx = (firstBrace === -1) ? firstBracket : (firstBracket === -1) ? firstBrace : Math.min(firstBrace, firstBracket);
+      
+      if (startIdx !== -1) {
+          cleanText = cleanText.substring(startIdx);
+          // Try to find the last closing brace/bracket
+          const lastBrace = cleanText.lastIndexOf('}');
+          const lastBracket = cleanText.lastIndexOf(']');
+          const endIdx = Math.max(lastBrace, lastBracket);
+          if (endIdx !== -1) {
+             cleanText = cleanText.substring(0, endIdx + 1);
+          }
       }
 
       return JSON.parse(cleanText);
